@@ -1,0 +1,79 @@
+import vk_api.vk_api
+from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
+from random import randint
+import bs4
+import requests
+import http
+import json
+
+
+class Bot:
+    def __init__(self):
+        self.vk = vk_api.VkApi(token='a58d2fee5ee13e1395da4a684e8067c39ed66a'
+                                     '91f1d22344059901c29b58bca9601baf20dca1fe1b3d1ff')
+        self.long_poll = VkBotLongPoll(self.vk, group_id='181100955')
+        self.vk_api = self.vk.get_api()  # Для вызова методов vk_api
+
+    def photo(self, send_id, root='img.jpg'):
+        request = requests.post(self.vk.method('photos.getMessagesUploadServer')['upload_url'], files={'photo': open(root, 'rb')}).json()
+        save_photo = self.vk_api.photos.saveMessagesPhoto(photo=request['photo'], server=request['server'], hash=request['hash'])[0]
+        photo = f'photo{save_photo["owner_id"]}_{save_photo["id"]}'
+        self.vk_api.messages.send(peer_id=send_id, message='', random_id=randint(-1000, 1000), attachment=photo)
+
+    def send_msg(self, send_id, message):
+        self.vk_api.messages.send(peer_id=send_id, message=message, random_id=randint(-1000, 1000))
+
+    def main(self):
+        for event in self.long_poll.listen():
+            if event.type == VkBotEventType.MESSAGE_NEW:
+                req = self.vk_api.users.get(user_ids=event.obj.from_id, fields='photo_id', name_case='nom')
+                self.inbox(event)
+                print(req[0]['first_name'], ': ', event.obj.text, sep='')
+
+    @staticmethod
+    def _clean_all_tag_from_str(string_line):
+        result = ""
+        not_skip = True
+        for i in list(string_line):
+            if not_skip:
+                if i == "<":
+                    not_skip = False
+                else:
+                    result += i
+            else:
+                if i == ">":
+                    not_skip = True
+
+        return result
+
+    def inbox(self, event):
+        try:
+            if event.obj.text.lower() == 'помощь':
+                self.send_msg(event.obj.peer_id, '''"Время"- Точное время по МСК.
+                                                    "План"- Расписание на следующий день.''')
+            if 'иль' in event.obj.text.lower():
+                self.send_msg(event.obj.peer_id, 'Кстати хочется заметить, что Илья дебил')
+            if event.obj.text.lower() == 'время':
+                self.send_msg(event.obj.peer_id, self._get_time())
+            if event.obj.text.lower() == 'план' or event.obj.text.lower() == 'расписание':
+                self.down_plan()
+                self.photo(event.obj.peer_id, root='res.png')
+        except IndexError as e:
+            print('Неожиданный файл:', e)
+
+    def _get_time(self):
+        request = requests.get("https://my-calend.ru/date-and-time-today")
+        b = bs4.BeautifulSoup(request.text, "html.parser")
+        return self._clean_all_tag_from_str(str(b.select(".page")[0].findAll("h2")[1])).split()[1]  # Время
+
+    @staticmethod
+    def down_plan():
+        res = requests.get("http://амтэк35.рф/index.php?mode=schedule")
+        x = str(res.content).index('upimage', 0, 60000)
+        url = str(res.content)[x - 34:x + 27]
+        img = requests.get(url)
+        out = open("res.png", "wb")
+        out.write(img.content)
+        out.close()  # Отправка изображения расписания в беседу
+
+Bot().main()
